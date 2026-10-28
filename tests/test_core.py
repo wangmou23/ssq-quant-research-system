@@ -21,6 +21,15 @@ def test_draw_validation():
     raise AssertionError("invalid draw was accepted")
 
 
+def test_pick_validation():
+    try:
+        from ssq_research.core import Pick
+        Pick((1, 1, 2, 3, 4, 5), 1)
+    except ValueError:
+        return
+    raise AssertionError("invalid pick was accepted")
+
+
 def test_prize_rules_and_summary():
     actual = (1, 2, 3, 4, 5, 6)
     assert evaluate_prize(type("Pick", (), {"reds": actual, "blue": 7})(), actual, 7).level == "一等奖"
