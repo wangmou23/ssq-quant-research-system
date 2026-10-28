@@ -1,14 +1,15 @@
 from __future__ import annotations
 
 import argparse
-import random
+from datetime import date, timedelta
 from pathlib import Path
 
 from .core import Draw, FrequencyStrategy, RandomStrategy, load_csv, run_backtest, write_json
 
 
 def demo() -> None:
-    draws = [Draw(str(2026001 + i), f"2026-01-{i + 1:02d}", tuple(range(1 + i % 20, 7 + i % 20)), 1 + i % 16) for i in range(40)]
+    start = date(2026, 1, 1)
+    draws = [Draw(str(2026001 + i), (start + timedelta(days=i)).isoformat(), tuple(range(1 + i % 20, 7 + i % 20)), 1 + i % 16) for i in range(40)]
     rows = run_backtest(draws, (RandomStrategy(), FrequencyStrategy()), window=10, seed=7)
     print(f"rows={len(rows)} strategies={sorted({row['strategy'] for row in rows})}")
 
