@@ -29,6 +29,9 @@ class LstmConfig:
     epochs: int = 20
     batch_size: int = 32
     learning_rate: float = 0.001
+    retrain_every: int = 1
+    max_predictions: int | None = None
+    verbose: int = 0
 
 
 def encode_draw(draw: Draw) -> np.ndarray:
@@ -72,7 +75,7 @@ def train_model(draws: Iterable[Draw], config: LstmConfig, validation_split: flo
     """Train only on the supplied historical prefix; callers own the split."""
     x, y = make_sequences(draws, config.window)
     model = build_model(config)
-    model.fit(x, y, epochs=config.epochs, batch_size=config.batch_size, validation_split=validation_split, shuffle=False, verbose=0)
+    model.fit(x, y, epochs=config.epochs, batch_size=config.batch_size, validation_split=validation_split, shuffle=False, verbose=config.verbose)
     return model
 
 
@@ -91,10 +94,17 @@ def walk_forward_lstm(draws: Iterable[Draw], config: LstmConfig, min_history: in
     ordered = sorted(draws, key=lambda draw: (draw.draw_date, draw.issue))
     if min_history <= config.window or min_history >= len(ordered):
         raise ValueError("min_history must be greater than window and smaller than draw count")
+    if config.retrain_every < 1:
+        raise ValueError("retrain_every must be at least 1")
+    start = min_history
+    if config.max_predictions is not None:
+        start = max(min_history, len(ordered) - config.max_predictions)
     results = []
-    for index in range(min_history, len(ordered)):
+    model = None
+    for index in range(start, len(ordered)):
         prefix = ordered[:index]
-        model = train_model(prefix, config, validation_split=0.0)
+        if model is None or (index - start) % config.retrain_every == 0:
+            model = train_model(prefix, config, validation_split=0.0)
         probabilities = model.predict(np.expand_dims(np.stack([encode_draw(d) for d in prefix[-config.window:]]), 0), verbose=0)[0]
         pick = pick_from_probabilities(probabilities, seed=seed + index)
         target = ordered[index]
