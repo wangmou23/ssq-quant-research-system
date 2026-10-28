@@ -1,6 +1,7 @@
 from ssq_research.core import Draw, FrequencyStrategy, RandomStrategy, run_backtest, summarize
 from ssq_research.prize import evaluate_prize
 from ssq_research.lstm import encode_draw, make_sequences, pick_from_probabilities
+from ssq_research.data_fetch import parse_ssq_text
 
 
 def history(n=40):
@@ -47,4 +48,12 @@ def test_lstm_dataset_and_pick_shape_without_tensorflow():
     pick = pick_from_probabilities(encode_draw(draws[-1]))
     assert len(pick.reds) == 6
     assert 1 <= pick.blue <= 16
+
+
+def test_parse_downloaded_ssq_text():
+    text = "2026001 2026-01-01 01 02 03 04 05 06 07\n"
+    draws = parse_ssq_text(text)
+    assert draws[0].issue == "2026001"
+    assert draws[0].reds == (1, 2, 3, 4, 5, 6)
+    assert draws[0].blue == 7
 
