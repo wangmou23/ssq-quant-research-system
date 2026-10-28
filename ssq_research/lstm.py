@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import Any, Iterable
 
 from .core import Draw, Pick
+from .prize import evaluate_prize
 
 
 def _numpy():
@@ -108,6 +109,7 @@ def walk_forward_lstm(draws: Iterable[Draw], config: LstmConfig, min_history: in
         probabilities = model.predict(np.expand_dims(np.stack([encode_draw(d) for d in prefix[-config.window:]]), 0), verbose=0)[0]
         pick = pick_from_probabilities(probabilities, seed=seed + index)
         target = ordered[index]
-        results.append({"strategy": "lstm", "issue": target.issue, "red_hits": len(set(pick.reds) & set(target.reds)), "blue_hits": int(pick.blue == target.blue), "training_end_issue": prefix[-1].issue})
+        prize = evaluate_prize(pick, target.reds, target.blue)
+        results.append({"strategy": "lstm", "issue": target.issue, "red_hits": len(set(pick.reds) & set(target.reds)), "blue_hits": int(pick.blue == target.blue), "level": prize.level, "payout": prize.payout, "payout_basis": prize.payout_basis, "cost": 2.0, "net": prize.payout - 2.0, "training_end_issue": prefix[-1].issue})
     return results
 
