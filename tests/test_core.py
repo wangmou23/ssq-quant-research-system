@@ -1,4 +1,5 @@
-from ssq_research.core import Draw, FrequencyStrategy, RandomStrategy, run_backtest
+from ssq_research.core import Draw, FrequencyStrategy, RandomStrategy, run_backtest, summarize
+from ssq_research.prize import evaluate_prize
 
 
 def history(n=40):
@@ -17,4 +18,13 @@ def test_draw_validation():
     except ValueError:
         return
     raise AssertionError("invalid draw was accepted")
+
+
+def test_prize_rules_and_summary():
+    actual = (1, 2, 3, 4, 5, 6)
+    assert evaluate_prize(type("Pick", (), {"reds": actual, "blue": 7})(), actual, 7).level == "一等奖"
+    rows = run_backtest(history(), (RandomStrategy(),), window=10, seed=3)
+    summary = summarize(rows)
+    assert summary[0]["trials"] == 30
+    assert summary[0]["cost"] == 60.0
 
