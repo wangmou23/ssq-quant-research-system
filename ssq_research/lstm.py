@@ -9,9 +9,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Iterable
 
-import numpy as np
-
 from .core import Draw, Pick
+
+
+def _numpy():
+    try:
+        import numpy as np
+    except ImportError as exc:
+        raise RuntimeError("LSTM utilities require optional dependency numpy") from exc
+    return np
 
 
 @dataclass(frozen=True)
@@ -27,6 +33,7 @@ class LstmConfig:
 
 def encode_draw(draw: Draw) -> np.ndarray:
     """Encode one draw as 49 binary indicators (33 red + 16 blue)."""
+    np = _numpy()
     vector = np.zeros(49, dtype=np.float32)
     for number in draw.reds:
         vector[number - 1] = 1.0
@@ -35,6 +42,7 @@ def encode_draw(draw: Draw) -> np.ndarray:
 
 
 def make_sequences(draws: Iterable[Draw], window: int) -> tuple[np.ndarray, np.ndarray]:
+    np = _numpy()
     ordered = list(draws)
     if window < 1 or len(ordered) <= window:
         raise ValueError("draw count must be greater than window")
@@ -69,7 +77,7 @@ def train_model(draws: Iterable[Draw], config: LstmConfig, validation_split: flo
 
 
 def pick_from_probabilities(probabilities: np.ndarray, seed: int = 0) -> Pick:
-    rng = np.random.default_rng(seed)
+    np = _numpy()
     red_scores = probabilities[:33]
     blue_scores = probabilities[33:]
     reds = tuple(sorted((np.argsort(red_scores)[-6:] + 1).tolist()))
@@ -79,6 +87,7 @@ def pick_from_probabilities(probabilities: np.ndarray, seed: int = 0) -> Pick:
 
 def walk_forward_lstm(draws: Iterable[Draw], config: LstmConfig, min_history: int, seed: int = 0) -> list[dict]:
     """Retrain on each prefix and evaluate only the following target draw."""
+    np = _numpy()
     ordered = sorted(draws, key=lambda draw: (draw.draw_date, draw.issue))
     if min_history <= config.window or min_history >= len(ordered):
         raise ValueError("min_history must be greater than window and smaller than draw count")
