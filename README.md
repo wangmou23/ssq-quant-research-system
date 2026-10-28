@@ -11,12 +11,13 @@
 - 严格按时间推进的滚动回测
 - 红球/蓝球命中数、成本、奖金和收益记录
 - 研究结果导出为 JSON
+- 固定奖金基线与可变奖金的明确标记
 
 ## 使用
 
 ```powershell
 python -m ssq_research.cli demo
-python -m ssq_research.cli backtest --csv data/ssq.csv --window 30 --tickets 1
+python -m ssq_research.cli backtest --csv data/ssq.csv --window 30 --output backtest.json
 ```
 
 CSV 字段：`issue,draw_date,red_1,red_2,red_3,red_4,red_5,red_6,blue`。
