@@ -8,6 +8,9 @@ version = "0.1.0"
 requires-python = ">=3.10"
 dependencies = []
 
+[project.optional-dependencies]
+lstm = ["tensorflow>=2.15"]
+
 [project.scripts]
 ssq-research = "ssq_research.cli:main"
 
