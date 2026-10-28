@@ -1,5 +1,6 @@
 from ssq_research.core import Draw, FrequencyStrategy, RandomStrategy, run_backtest, summarize
 from ssq_research.prize import evaluate_prize
+from ssq_research.lstm import encode_draw, make_sequences, pick_from_probabilities
 
 
 def history(n=40):
@@ -27,4 +28,14 @@ def test_prize_rules_and_summary():
     summary = summarize(rows)
     assert summary[0]["trials"] == 30
     assert summary[0]["cost"] == 60.0
+
+
+def test_lstm_dataset_and_pick_shape_without_tensorflow():
+    draws = history(12)
+    x, y = make_sequences(draws, 5)
+    assert x.shape == (7, 5, 49)
+    assert y.shape == (7, 49)
+    pick = pick_from_probabilities(encode_draw(draws[-1]))
+    assert len(pick.reds) == 6
+    assert 1 <= pick.blue <= 16
 
