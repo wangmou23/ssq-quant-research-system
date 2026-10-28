@@ -7,6 +7,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Iterable, Protocol
 
+from .prize import evaluate_prize
+
 
 @dataclass(frozen=True)
 class Draw:
@@ -81,10 +83,18 @@ def run_backtest(draws: Iterable[Draw], strategies: Iterable[Strategy], window: 
             pick = strategy.pick(history, rng)
             red_hits = len(set(pick.reds) & set(target.reds))
             blue_hits = int(pick.blue == target.blue)
-            results.append({"strategy": strategy.name, "issue": target.issue, "red_hits": red_hits, "blue_hits": blue_hits, "cost": 2.0})
+            prize = evaluate_prize(pick, target.reds, target.blue)
+            results.append({"strategy": strategy.name, "issue": target.issue, "red_hits": red_hits, "blue_hits": blue_hits, "level": prize.level, "payout": prize.payout, "payout_basis": prize.payout_basis, "cost": 2.0, "net": prize.payout - 2.0})
     return results
 
 
 def write_json(rows: list[dict], path: Path) -> None:
     path.write_text(json.dumps(rows, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def summarize(rows: Iterable[dict]) -> list[dict]:
+    grouped: dict[str, list[dict]] = {}
+    for row in rows:
+        grouped.setdefault(row["strategy"], []).append(row)
+    return [{"strategy": name, "trials": len(items), "cost": sum(item["cost"] for item in items), "payout": sum(item["payout"] for item in items), "net": sum(item["net"] for item in items), "avg_red_hits": sum(item["red_hits"] for item in items) / len(items), "avg_blue_hits": sum(item["blue_hits"] for item in items) / len(items)} for name, items in sorted(grouped.items())]
 
