@@ -3,7 +3,7 @@ from __future__ import annotations
 import csv
 import json
 import random
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Protocol
 
@@ -28,6 +28,12 @@ class Draw:
 class Pick:
     reds: tuple[int, ...]
     blue: int
+
+    def __post_init__(self) -> None:
+        if len(self.reds) != 6 or len(set(self.reds)) != 6 or not all(1 <= n <= 33 for n in self.reds):
+            raise ValueError("pick red balls must contain six distinct values from 1..33")
+        if not 1 <= self.blue <= 16:
+            raise ValueError("pick blue ball must be in 1..16")
 
 
 class Strategy(Protocol):
@@ -64,9 +70,15 @@ def load_csv(path: Path) -> list[Draw]:
     with path.open(encoding="utf-8", newline="") as handle:
         rows = csv.DictReader(handle)
         draws = []
-        for row in rows:
-            reds = tuple(sorted(int(row[f"red_{i}"]) for i in range(1, 7)))
-            draws.append(Draw(row["issue"], row["draw_date"], reds, int(row["blue"])))
+        for row_number, row in enumerate(rows, start=2):
+            try:
+                reds = tuple(sorted(int(row[f"red_{i}"]) for i in range(1, 7)))
+                draws.append(Draw(row["issue"], row["draw_date"], reds, int(row["blue"])))
+            except (KeyError, TypeError, ValueError) as exc:
+                raise ValueError(f"invalid SSQ CSV row {row_number}: {row}") from exc
+    issues = [draw.issue for draw in draws]
+    if len(issues) != len(set(issues)):
+        raise ValueError("duplicate issue found in SSQ CSV")
     return sorted(draws, key=lambda draw: (draw.draw_date, draw.issue))
 
 
