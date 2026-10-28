@@ -12,6 +12,7 @@
 - 红球/蓝球命中数、成本、奖金和收益记录
 - 研究结果导出为 JSON
 - 固定奖金基线与可变奖金的明确标记
+- 可选的多层 LSTM 训练、预测和 walk-forward 回测流水线
 
 ## 使用
 
@@ -21,6 +22,14 @@ python -m ssq_research.cli backtest --csv data/ssq.csv --window 30 --output back
 ```
 
 CSV 字段：`issue,draw_date,red_1,red_2,red_3,red_4,red_5,red_6,blue`。
+
+启用 LSTM：
+
+```powershell
+python -m pip install -e ".[lstm]"
+```
+
+LSTM 只作为独立实验策略；训练时 `shuffle=False`，回测按历史前缀逐期推进，不得与随机基线分离报告。
 
 ## 研究边界
 
