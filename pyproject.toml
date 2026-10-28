@@ -9,7 +9,7 @@ requires-python = ">=3.10"
 dependencies = []
 
 [project.optional-dependencies]
-lstm = ["tensorflow>=2.15"]
+lstm = ["numpy>=1.26", "tensorflow>=2.15"]
 
 [project.scripts]
 ssq-research = "ssq_research.cli:main"
