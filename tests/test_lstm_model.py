@@ -75,7 +75,7 @@ def fast_config(window: int) -> LstmConfig:
 
 @pytest.fixture(scope="module")
 def trained_model(window: int, fast_config: LstmConfig):
-    return train_model(synthetic_draws(40), fast_config, validation_split=0.0)
+    return train_model(synthetic_draws(120), fast_config, validation_split=0.0)
 
 
 # --------------------------------------------------------------------------- #
@@ -88,9 +88,9 @@ def test_build_model_exposes_two_named_heads_with_the_right_widths(contract_conf
 
     assert list(model.output_names) == ["red_head", "blue_head"]
     red_output, blue_output = model.outputs
-    assert int(red_output.shape[-1]) == RED_NUMBERS
-    assert int(blue_output.shape[-1]) == BLUE_NUMBERS
-    assert int(model.input_shape[-1]) == FEATURE_COUNT
+    assert int(red_output.shape[-1]) == RED_NUMBERS == 33
+    assert int(blue_output.shape[-1]) == BLUE_NUMBERS == 16
+    assert int(model.input_shape[-1]) == FEATURE_COUNT == 49
 
 
 def test_blue_head_normalises_with_softmax_and_red_head_stays_sigmoid(contract_config):
@@ -109,6 +109,9 @@ def test_blue_head_normalises_with_softmax_and_red_head_stays_sigmoid(contract_c
 
 def test_each_head_is_trained_with_the_loss_its_activation_implies(contract_config):
     model = build_model(contract_config)
+    # Keras 3 returns a ``_DictWrapper`` here, not a plain ``dict``. It is a
+    # Mapping, so read it through the mapping interface (keys / []); an
+    # ``isinstance(model.loss, dict)`` check would be a version trap.
     losses = dict(model.loss)
 
     assert set(losses) == {"red_head", "blue_head"}
@@ -125,12 +128,14 @@ def test_dual_head_targets_match_what_sparse_categorical_ce_expects(fast_config)
     draws = synthetic_draws(40)
     _x, y_red, y_blue = make_sequences(draws, fast_config.window, return_heads=True)
 
-    assert y_red.shape[1] == RED_NUMBERS
+    assert y_red.shape[1] == RED_NUMBERS == 33
     assert y_blue.shape == (y_red.shape[0],)
     assert y_blue.dtype == np.int32
     assert int(y_blue.min()) >= 0
-    assert int(y_blue.max()) <= BLUE_NUMBERS - 1
+    assert int(y_blue.max()) <= 15  # blue - 1, so blue 16 becomes class 15
     assert set(np.unique(y_red).tolist()) <= {0.0, 1.0}
+    # Six of thirty-three is multi-label: every target row carries exactly six ones.
+    assert set(y_red.sum(axis=1).tolist()) == {6.0}
 
 
 def test_model_can_fit_the_dual_head_targets(trained_model, window):
@@ -151,13 +156,22 @@ def test_only_the_blue_half_is_normalised(trained_model, window):
     draws = synthetic_draws(20)
     probabilities = predict_probabilities(trained_model, draws[-window:])
 
+    assert probabilities.shape == (FEATURE_COUNT,)
     red_scores, blue_scores = probabilities[:RED_NUMBERS], probabilities[RED_NUMBERS:]
-    # softmax over 16 classes -> sums to exactly 1
+
+    # softmax over 16 mutually exclusive classes -> sums to exactly 1.
+    # Revert ``blue_head`` to sigmoid and this line is the one that fails.
     assert float(np.sum(blue_scores)) == pytest.approx(1.0, abs=1e-5)
+    # softmax never emits 0 or a negative probability.
     assert float(np.min(blue_scores)) > 0.0
-    # 33 independent sigmoids -> must NOT be normalised; a sum of 1 here would
-    # mean the red head was accidentally turned into a 33-way softmax.
-    assert float(np.sum(red_scores)) != pytest.approx(1.0, abs=1e-2)
+    assert len(blue_scores) == 16
+
+    # 33 independent sigmoids -> deliberately NOT normalised. A sum near 1 here
+    # would mean the red head was turned into a 33-way softmax as well.
+    red_total = float(np.sum(red_scores))
+    assert len(red_scores) == 33
+    assert red_total > 3.0
+    assert red_total < float(RED_NUMBERS)
 
 
 def test_predict_probabilities_accepts_a_prebuilt_batch(trained_model, window):

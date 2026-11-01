@@ -78,6 +78,28 @@ def test_encode_draw_handles_blue_boundaries(blue):
     assert vector[BLUE_SLICE].sum() == 1.0
 
 
+def test_encode_draw_uses_the_concrete_slots_33_and_48_for_the_blue_ball():
+    """Concrete indices, not just "sums to seven".
+
+    A 33/16/49 off-by-one silently shifts every ball by one slot, and a
+    "sum == 7" assertion would still pass. Pinning the exact index sets is what
+    makes such a shift fail loudly.
+    """
+    blue_one = encode_draw(Draw("1", "2026-01-01", (1, 2, 3, 4, 5, 6), 1))
+    assert set(np.flatnonzero(blue_one).tolist()) == {0, 1, 2, 3, 4, 5, 33}
+    assert blue_one[33] == 1.0  # blue 1 -> 33 + 1 - 1
+    assert blue_one[48] == 0.0
+
+    blue_sixteen = encode_draw(Draw("1", "2026-01-01", (1, 2, 3, 4, 5, 6), 16))
+    assert set(np.flatnonzero(blue_sixteen).tolist()) == {0, 1, 2, 3, 4, 5, 48}
+    assert blue_sixteen[48] == 1.0  # blue 16 -> 33 + 16 - 1
+
+    red_thirty_three = encode_draw(Draw("1", "2026-01-01", (33, 2, 3, 4, 5, 6), 16))
+    assert red_thirty_three[32] == 1.0  # red 33 -> index 32
+    assert red_thirty_three[33] == 0.0  # red 33 must not spill into the blue block
+    assert set(np.flatnonzero(red_thirty_three).tolist()) == {1, 2, 3, 4, 5, 32, 48}
+
+
 # --------------------------------------------------------------------------- #
 # make_sequences: legacy contract plus the dual-head targets
 # --------------------------------------------------------------------------- #
@@ -139,6 +161,19 @@ def test_pack_targets_rebuilds_the_legacy_multi_hot_matrix():
     np.testing.assert_allclose(packed, y_legacy)
 
 
+def test_make_sequences_blue_label_equals_the_blue_ball_minus_one():
+    """``sparse_categorical_crossentropy`` needs 0-based labels, i.e. blue - 1."""
+    blues = [1, 7, 16, 3, 12]
+    draws = [
+        Draw(str(2026001 + index), f"2026-01-{index + 1:02d}", (1, 2, 3, 4, 5, 6), blue)
+        for index, blue in enumerate(blues)
+    ]
+    _x, _y_red, y_blue = make_sequences(draws, 3, return_heads=True)
+
+    # Targets are draws[3:] -> blue 3 and blue 12.
+    assert y_blue.tolist() == [2, 11]
+
+
 def test_pack_targets_handles_the_first_and_last_blue_class():
     y_red = np.zeros((2, RED_NUMBERS), dtype="float32")
     packed = pack_targets(y_red, np.array([0, BLUE_NUMBERS - 1], dtype="int32"))
@@ -146,6 +181,16 @@ def test_pack_targets_handles_the_first_and_last_blue_class():
     assert packed[0, RED_NUMBERS] == 1.0
     assert packed[1, FEATURE_COUNT - 1] == 1.0
     assert packed.sum() == 2.0
+
+
+def test_pack_targets_puts_each_label_at_33_plus_label():
+    y_red = np.zeros((3, RED_NUMBERS), dtype="float32")
+    packed = pack_targets(y_red, np.array([0, 7, BLUE_NUMBERS - 1], dtype="int32"))
+
+    assert set(np.flatnonzero(packed[0]).tolist()) == {33}
+    assert set(np.flatnonzero(packed[1]).tolist()) == {40}
+    assert set(np.flatnonzero(packed[2]).tolist()) == {48}
+    assert packed.sum() == 3.0
 
 
 # --------------------------------------------------------------------------- #
@@ -253,6 +298,20 @@ def test_normalize_weights_falls_back_to_uniform_for_a_dead_distribution():
     weights = normalize_weights(np.zeros(BLUE_NUMBERS))
     assert weights.sum() == pytest.approx(1.0)
     np.testing.assert_allclose(weights, np.full(BLUE_NUMBERS, 1.0 / BLUE_NUMBERS))
+
+
+def test_normalize_weights_falls_back_to_uniform_when_every_score_is_nan():
+    weights = normalize_weights(np.full(BLUE_NUMBERS, np.nan))
+    np.testing.assert_allclose(weights, np.full(BLUE_NUMBERS, 1.0 / BLUE_NUMBERS))
+
+
+def test_normalize_weights_turns_a_single_non_zero_score_into_a_point_mass():
+    scores = np.zeros(BLUE_NUMBERS)
+    scores[5] = 3.0
+    weights = normalize_weights(scores)
+
+    assert weights[5] == pytest.approx(1.0)
+    assert weights.sum() == pytest.approx(1.0)
 
 
 def test_normalize_weights_rejects_an_empty_vector():

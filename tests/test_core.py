@@ -79,9 +79,28 @@ def test_backtest_row_count_is_periods_times_strategies():
 
 
 def test_backtest_records_the_picked_blue_ball():
-    rows = run_backtest(history(), (RandomStrategy(),), window=10, seed=3)
-    assert all(1 <= row["pick_blue"] <= 16 for row in rows)
-    assert all(len(row["pick_reds"]) == 6 for row in rows)
+    # ``1 <= pick_blue <= 16`` is already enforced by ``Pick.__post_init__``, so
+    # asserting it proves nothing. Compare the emitted row against what the
+    # strategy actually returned, period by period.
+    class _PickSpy:
+        name = "spy"
+
+        def __init__(self):
+            self.picks = []
+
+        def pick(self, history, rng):
+            index = len(self.picks)
+            pick = Pick(tuple(range(1 + index % 20, 7 + index % 20)), 1 + index % 16)
+            self.picks.append(pick)
+            return pick
+
+    spy = _PickSpy()
+    rows = run_backtest(history(20), (spy,), window=5, seed=3)
+
+    assert len(rows) == len(spy.picks)
+    for row, pick in zip(rows, spy.picks):
+        assert row["pick_blue"] == pick.blue
+        assert tuple(row["pick_reds"]) == pick.reds
 
 
 def test_backtest_is_reproducible_for_a_fixed_seed():
@@ -208,8 +227,14 @@ def test_parse_does_not_mistake_footer_numbers_for_balls():
     assert draws[0].reds == (1, 2, 3, 4, 5, 6)
 
 
-def test_blue_entropy_max_is_four_bits():
-    assert BLUE_ENTROPY_MAX == 4.0
+def test_report_publishes_the_entropy_ceiling_for_comparison():
+    # ``math.log2(16) == 4`` on its own is a tautology. What matters is that the
+    # report ships the ceiling next to the empirical entropy so a reader can tell
+    # 0.3 bit from 4 bit without hard-coding the constant themselves.
+    report = blue_degeneracy_report([{"strategy": "s", "issue": "2026001", "pick_blue": 5}])
+    assert report["blue_entropy_max"] == pytest.approx(BLUE_ENTROPY_MAX)
+    assert report["blue_entropy_max"] == pytest.approx(4.0)
+    assert report["blue_entropy"] < report["blue_entropy_max"]
 
 
 def write_csv(tmp_path, body):

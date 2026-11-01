@@ -92,19 +92,33 @@ def test_pick_from_probabilities_actually_uses_the_seed():
 
 
 def test_pick_sampled_respects_a_peaked_distribution():
+    """A sampled pick must track the distribution; an argmax cannot be told apart
+    from a sampler unless the peak actually dominates the empirical frequency."""
     probabilities = np.zeros(FEATURE_COUNT, dtype="float32")
-    probabilities[RED_NUMBERS + 2] = 0.85
-    other_blues = [index for index in range(BLUE_NUMBERS) if index != 2]
-    probabilities[RED_NUMBERS + np.array(other_blues, dtype="int64")] = 0.01
+    probabilities[RED_NUMBERS + 2] = 0.97
+    other_blues = np.array([index for index in range(BLUE_NUMBERS) if index != 2], dtype="int64")
+    probabilities[RED_NUMBERS + other_blues] = 0.03 / other_blues.size
+
     rng = np.random.default_rng(0)
     blues = [pick_sampled(probabilities, rng).blue for _ in range(200)]
-    assert blues.count(3) / len(blues) > 0.6
+    assert blues.count(3) / len(blues) > 0.8
+    assert len(set(blues)) > 1  # still samples, it does not collapse onto the mode
+
+    # The point estimate, by contrast, is pinned to the mode every single time.
+    assert {pick_argmax(probabilities).blue for _ in range(200)} == {3}
 
 
 def test_pick_sampled_handles_all_zero_probabilities():
     probabilities = np.zeros(FEATURE_COUNT, dtype="float32")
-    for seed in range(10):
-        assert_legal(pick_sampled(probabilities, np.random.default_rng(seed)))
+    picks = [pick_sampled(probabilities, np.random.default_rng(seed)) for seed in range(10)]
+    for pick in picks:
+        assert_legal(pick)
+    # A dead distribution must fall back to the uniform support, not quietly lock
+    # onto one number: 200 draws over 16 blue balls should cover most of them.
+    blues = [pick_sampled(probabilities, np.random.default_rng(seed)).blue for seed in range(200)]
+    assert len(set(blues)) > 5
+    reds = {pick_sampled(probabilities, np.random.default_rng(seed)).reds for seed in range(50)}
+    assert len(reds) > 10
 
 
 def test_pick_sampled_handles_negative_nan_and_inf():
@@ -115,6 +129,11 @@ def test_pick_sampled_handles_negative_nan_and_inf():
         probabilities[RED_NUMBERS] = filler
         pick = pick_sampled(probabilities, np.random.default_rng(3))
         assert_legal(pick)
+
+        # Killing three of sixteen blue weights must leave the remaining thirteen
+        # as a proper (renormalised) support, not a single frozen number.
+        blues = [pick_sampled(probabilities, np.random.default_rng(seed)).blue for seed in range(200)]
+        assert len(set(blues)) > 5
 
 
 def test_pick_sampled_handles_insufficient_support():
