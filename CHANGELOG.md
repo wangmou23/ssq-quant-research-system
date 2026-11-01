@@ -3,6 +3,29 @@
 本项目的所有重要变更都记录在此文件中，格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.2.2] - 2026-11-01
+
+测试补强版本。**运行时代码零改动**：`ssq_research/` 与 `notebooks/` 一行未改，行为与 API 与 0.2.1 完全一致，
+版本号提升只为让这份测试覆盖可被引用。
+
+### 测试
+
+- 新增 `tests/test_lstm_model.py`（14 用例，需要 tensorflow，用 `importorskip` 守护）：双头结构
+  （`blue_head` 必须是 `softmax`、`red_head` 必须是 `sigmoid`）、loss 配置、`make_sequences` 的双头
+  标签布局、`predict_probabilities` 单条/batch 契约、`set_global_seed` 的可复现性。直接断言
+  `model.get_layer("blue_head").activation.__name`，比断言 loss 字符串更贴近根因。
+- 新增 `tests/test_lstm_heads.py`（25 个用例 / 45 个参数化实例，纯 numpy，<1s）：`encode_draw`
+  红蓝边界、`split_probabilities` / `combine_heads` / `pack_targets` 往返、`normalize_weights`
+  的归一与退化回退、`split_head_outputs` 对旧单头 checkpoint 的兼容。
+- `tests/test_core.py` 由 14 增至 20 用例：用策略 spy 取代原先「`red_hits >= 0`」这类恒真断言
+  （基数不可能为负，原断言什么都没验证），真正证明滚动窗口只含历史、且不含目标期及之后的数据。
+- `tests/test_diagnostics.py` 保持 10 用例不变（0.2.1 的两个阈值边界在此被独立变异复核）。
+- 合计 **101 用例**：`python -m pytest -q` → `101 passed`；无 TensorFlow 环境
+  `--ignore=tests/test_lstm_model.py` → `87 passed`。
+- 0.2.1 条目里「由 QA 后续落地」的测试已在 0.2.2 全部落地。
+- 独立变异复核（由本次提交方执行，确认测试非空转）：把 `blue_head` 改回 `sigmoid` → 3 个用例失败；
+  `MAX_HEALTHY_DISTINCT_BLUE` 由 7 改 3 → 1 个用例失败。
+
 ## [0.2.1] - 2026-11-01
 
 补丁版本，闭合 0.2.0 遗留的验收缺口：notebook 默认 `SEED` 写死导致两次运行输出仍然逐位相同。
