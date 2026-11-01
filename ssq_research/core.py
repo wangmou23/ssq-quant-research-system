@@ -2,12 +2,21 @@ from __future__ import annotations
 
 import csv
 import json
+import math
 import random
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Protocol
 
 from .prize import evaluate_prize
+
+RED_BALL_COUNT = 33
+BLUE_BALL_COUNT = 16
+REDS_PER_DRAW = 6
+BET_COST = 2.0
+#: Theoretical upper bound of blue-ball entropy, ``log2(16) == 4`` bits. Any
+#: empirical value far below this on a long backtest means the strategy collapsed.
+BLUE_ENTROPY_MAX = math.log2(BLUE_BALL_COUNT)
 
 
 @dataclass(frozen=True)
@@ -50,19 +59,39 @@ class RandomStrategy:
 
 
 class FrequencyStrategy:
+    """Pick the most frequent red balls and the most frequent blue ball.
+
+    Tie-breaking differs between the two halves on purpose:
+
+    * Red balls fill six distinct positions out of 33, so a fully deterministic
+      tie-break (highest count, then lowest number) still yields a fresh
+      six-number combination as soon as any count changes. Determinism here is
+      harmless and keeps the strategy easy to audit.
+    * The blue ball fills a single position. With a deterministic tie-break
+      (``max(..., key=lambda n: (count, -n))``) the pick is frozen to the
+      smallest number for as long as the tie lasts, and on near-uniform lottery
+      data the top count is tied for almost the whole backtest. That silently
+      produced a constant blue ball for hundreds of consecutive draws, which is
+      indistinguishable from a broken model. The tie is therefore resolved with
+      the caller's ``rng``: still reproducible for a fixed seed, but no longer
+      degenerate.
+    """
+
     name = "frequency"
 
     def pick(self, history: tuple[Draw, ...], rng: random.Random) -> Pick:
         if not history:
             return RandomStrategy().pick(history, rng)
-        red_counts = {n: 0 for n in range(1, 34)}
-        blue_counts = {n: 0 for n in range(1, 17)}
+        red_counts = {n: 0 for n in range(1, RED_BALL_COUNT + 1)}
+        blue_counts = {n: 0 for n in range(1, BLUE_BALL_COUNT + 1)}
         for draw in history:
             for n in draw.reds:
                 red_counts[n] += 1
             blue_counts[draw.blue] += 1
-        reds = tuple(sorted(n for n, _ in sorted(red_counts.items(), key=lambda item: (-item[1], item[0]))[:6]))
-        blue = max(blue_counts, key=lambda n: (blue_counts[n], -n))
+        reds = tuple(sorted(n for n, _ in sorted(red_counts.items(), key=lambda item: (-item[1], item[0]))[:REDS_PER_DRAW]))
+        best_blue_count = max(blue_counts.values())
+        blue_candidates = sorted(n for n, count in blue_counts.items() if count == best_blue_count)
+        blue = rng.choice(blue_candidates)
         return Pick(reds, blue)
 
 
@@ -82,6 +111,33 @@ def load_csv(path: Path) -> list[Draw]:
     return sorted(draws, key=lambda draw: (draw.draw_date, draw.issue))
 
 
+def build_result_row(strategy_name: str, target: Draw, pick: Pick, extra: dict | None = None) -> dict:
+    """Score ``pick`` against ``target`` and pack one auditable backtest row.
+
+    ``net`` is ``None`` whenever the payout is unknown (first/second prize,
+    whose amounts depend on the draw pool). Recording ``None`` keeps the sum of
+    settled rows honest; faking ``0.0`` used to book every jackpot as a 2 CNY
+    loss and bias the whole equity curve downwards.
+    """
+    prize = evaluate_prize(pick, target.reds, target.blue)
+    row = {
+        "strategy": strategy_name,
+        "issue": target.issue,
+        "red_hits": len(set(pick.reds) & set(target.reds)),
+        "blue_hits": int(pick.blue == target.blue),
+        "level": prize.level,
+        "payout": prize.payout,
+        "payout_basis": prize.payout_basis,
+        "cost": BET_COST,
+        "net": None if prize.payout is None else prize.payout - BET_COST,
+        "pick_reds": list(pick.reds),
+        "pick_blue": pick.blue,
+    }
+    if extra:
+        row.update(extra)
+    return row
+
+
 def run_backtest(draws: Iterable[Draw], strategies: Iterable[Strategy], window: int = 30, seed: int = 0) -> list[dict]:
     ordered = sorted(draws, key=lambda draw: (draw.draw_date, draw.issue))
     if window < 1 or window >= len(ordered):
@@ -93,10 +149,7 @@ def run_backtest(draws: Iterable[Draw], strategies: Iterable[Strategy], window: 
             target = ordered[index]
             history = tuple(ordered[index - window:index])
             pick = strategy.pick(history, rng)
-            red_hits = len(set(pick.reds) & set(target.reds))
-            blue_hits = int(pick.blue == target.blue)
-            prize = evaluate_prize(pick, target.reds, target.blue)
-            results.append({"strategy": strategy.name, "issue": target.issue, "red_hits": red_hits, "blue_hits": blue_hits, "level": prize.level, "payout": prize.payout, "payout_basis": prize.payout_basis, "cost": 2.0, "net": prize.payout - 2.0})
+            results.append(build_result_row(strategy.name, target, pick))
     return results
 
 
@@ -104,9 +157,108 @@ def write_json(rows: list[dict], path: Path) -> None:
     path.write_text(json.dumps(rows, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def _longest_run(values: list[int]) -> int:
+    """Length of the longest run of one repeated value."""
+    if not values:
+        return 0
+    longest = 1
+    current = 1
+    for previous, value in zip(values, values[1:]):
+        current = current + 1 if value == previous else 1
+        longest = max(longest, current)
+    return longest
+
+
+def blue_degeneracy_report(rows: Iterable[dict]) -> dict:
+    """Measure how degenerate the blue-ball picks of a backtest are.
+
+    A healthy sampler explores all 16 blue balls; a collapsed one keeps
+    returning the same number. The metrics below make that visible without
+    needing TensorFlow:
+
+    ``distinct_blue``
+        Number of different blue balls picked. A random baseline should reach
+        16 on a few hundred trials; ``1`` to ``3`` means the pick is locked.
+    ``blue_entropy``
+        Empirical Shannon entropy of the blue distribution in bits. Compare
+        against ``blue_entropy_max == 4.0`` (``log2(16)``): near ``0`` means a
+        single number carries all the mass.
+    ``top1_share``
+        Share of trials taken by the most frequent blue ball.
+    ``longest_run``
+        Longest streak of identical blue balls in the given row order.
+    ``degenerate``
+        Convenience flag: ``True`` when at least 16 picks were scored and either
+        ``distinct_blue <= 3`` or the entropy is below half of the maximum.
+
+    Rows without a ``pick_blue`` field are ignored for the blue statistics so
+    that hand-written or legacy rows cannot raise here.
+    """
+    ordered_rows = list(rows)
+    picks = [int(row["pick_blue"]) for row in ordered_rows if row.get("pick_blue") is not None]
+    trials = len(ordered_rows)
+    if not picks:
+        return {
+            "trials": trials,
+            "blue_picks": 0,
+            "distinct_blue": 0,
+            "blue_entropy": 0.0,
+            "blue_entropy_max": BLUE_ENTROPY_MAX,
+            "top1_share": 0.0,
+            "longest_run": 0,
+            "degenerate": False,
+        }
+    counts: dict[int, int] = {}
+    for blue in picks:
+        counts[blue] = counts.get(blue, 0) + 1
+    total = len(picks)
+    entropy = -sum((count / total) * math.log2(count / total) for count in counts.values())
+    entropy = 0.0 if entropy <= 0.0 else entropy  # also avoids the -0.0 repr
+    top1_share = max(counts.values()) / total
+    distinct_blue = len(counts)
+    degenerate = total >= 16 and (distinct_blue <= 3 or entropy < BLUE_ENTROPY_MAX / 2.0)
+    return {
+        "trials": trials,
+        "blue_picks": total,
+        "distinct_blue": distinct_blue,
+        "blue_entropy": round(entropy, 6),
+        "blue_entropy_max": BLUE_ENTROPY_MAX,
+        "top1_share": round(top1_share, 6),
+        "longest_run": _longest_run(picks),
+        "degenerate": degenerate,
+    }
+
+
 def summarize(rows: Iterable[dict]) -> list[dict]:
+    """Aggregate backtest rows per strategy.
+
+    Rows whose payout is unknown (``payout is None``) are excluded from the
+    ``payout``/``net`` sums and counted separately in ``variable_prize_count`` so
+    that an unknown jackpot can never be mistaken for a settled loss.
+    """
     grouped: dict[str, list[dict]] = {}
     for row in rows:
         grouped.setdefault(row["strategy"], []).append(row)
-    return [{"strategy": name, "trials": len(items), "cost": sum(item["cost"] for item in items), "payout": sum(item["payout"] for item in items), "net": sum(item["net"] for item in items), "avg_red_hits": sum(item["red_hits"] for item in items) / len(items), "avg_blue_hits": sum(item["blue_hits"] for item in items) / len(items)} for name, items in sorted(grouped.items())]
-
+    summary: list[dict] = []
+    for name, items in sorted(grouped.items()):
+        trials = len(items)
+        if trials == 0:  # pragma: no cover - defensive, grouping cannot be empty
+            continue
+        settled = [item for item in items if item.get("net") is not None]
+        report = blue_degeneracy_report(items)
+        summary.append(
+            {
+                "strategy": name,
+                "trials": trials,
+                "settled_trials": len(settled),
+                "variable_prize_count": trials - len(settled),
+                "cost": sum(float(item.get("cost") or 0.0) for item in items),
+                "payout": sum(float(item["payout"]) for item in settled) if settled else 0.0,
+                "net": sum(float(item["net"]) for item in settled) if settled else None,
+                "avg_red_hits": sum(item["red_hits"] for item in items) / trials,
+                "avg_blue_hits": sum(item["blue_hits"] for item in items) / trials,
+                "distinct_blue": report["distinct_blue"],
+                "blue_entropy": report["blue_entropy"],
+            }
+        )
+    return summary
