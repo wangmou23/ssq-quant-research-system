@@ -17,6 +17,13 @@ BET_COST = 2.0
 #: Theoretical upper bound of blue-ball entropy, ``log2(16) == 4`` bits. Any
 #: empirical value far below this on a long backtest means the strategy collapsed.
 BLUE_ENTROPY_MAX = math.log2(BLUE_BALL_COUNT)
+#: A blue-ball picker that only ever visits this many of the 16 balls is treated
+#: as degenerate regardless of how evenly it spreads across them. Needed because
+#: four perfectly even balls give exactly ``log2(4) == 2.0`` bits, which the
+#: ``entropy < 2.0`` test alone would miss.
+MAX_HEALTHY_DISTINCT_BLUE = 7
+#: Minimum number of scored picks before ``degenerate`` is decided at all.
+MIN_TRIALS_FOR_DEGENERACY = 16
 
 
 @dataclass(frozen=True)
@@ -188,8 +195,14 @@ def blue_degeneracy_report(rows: Iterable[dict]) -> dict:
     ``longest_run``
         Longest streak of identical blue balls in the given row order.
     ``degenerate``
-        Convenience flag: ``True`` when at least 16 picks were scored and either
-        ``distinct_blue <= 3`` or the entropy is below half of the maximum.
+        Convenience flag. It is only decided when at least 16 picks were scored
+        (``total <= 15`` is too few to be reliable, so the flag stays ``False``
+        and the raw metrics must be read instead). Above that floor a run is
+        flagged when ``distinct_blue <= 7`` or the entropy is below half of the
+        maximum (``2.0`` bits). The ``distinct_blue`` clause exists because the
+        entropy test alone leaves a blind spot: four blue balls that are picked
+        perfectly evenly give exactly ``2.0`` bits, which ``entropy < 2.0`` would
+        miss even though only a quarter of the ball space is ever explored.
 
     Rows without a ``pick_blue`` field are ignored for the blue statistics so
     that hand-written or legacy rows cannot raise here.
@@ -216,7 +229,7 @@ def blue_degeneracy_report(rows: Iterable[dict]) -> dict:
     entropy = 0.0 if entropy <= 0.0 else entropy  # also avoids the -0.0 repr
     top1_share = max(counts.values()) / total
     distinct_blue = len(counts)
-    degenerate = total >= 16 and (distinct_blue <= 3 or entropy < BLUE_ENTROPY_MAX / 2.0)
+    degenerate = total >= MIN_TRIALS_FOR_DEGENERACY and (distinct_blue <= MAX_HEALTHY_DISTINCT_BLUE or entropy < BLUE_ENTROPY_MAX / 2.0)
     return {
         "trials": trials,
         "blue_picks": total,

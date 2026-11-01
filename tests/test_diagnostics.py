@@ -62,6 +62,27 @@ def test_partially_collapsed_blue_ball_is_flagged():
     assert report["degenerate"] is True
 
 
+def test_four_evenly_spread_blue_balls_are_still_flagged():
+    # Four balls with an even 25% share give exactly log2(4) == 2.0 bits, so the
+    # old ``entropy < 2.0`` test alone missed it (a real reporting blind spot).
+    # The ``distinct_blue <= 7`` clause now catches it.
+    report = blue_degeneracy_report(make_rows([1, 2, 3, 4] * 10))
+    assert report["distinct_blue"] == 4
+    assert report["top1_share"] == pytest.approx(0.25)
+    assert report["blue_entropy"] == pytest.approx(2.0, abs=1e-6)
+    assert report["degenerate"] is True
+
+
+def test_too_few_trials_are_not_judged():
+    # The flag stays False below MIN_TRIALS_FOR_DEGENERACY even when the picks are
+    # obviously collapsed; the raw metrics remain readable.
+    report = blue_degeneracy_report(make_rows([9] * 15))
+    assert report["blue_picks"] == 15
+    assert report["distinct_blue"] == 1
+    assert report["blue_entropy"] == 0.0
+    assert report["degenerate"] is False
+
+
 def test_report_tolerates_rows_without_pick_blue():
     rows = [make_row(0, 3), {"strategy": "test", "issue": "2026002", "red_hits": 0, "blue_hits": 1}]
     report = blue_degeneracy_report(rows)

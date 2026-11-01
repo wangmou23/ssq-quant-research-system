@@ -49,7 +49,18 @@ report = blue_degeneracy_report(lstm_rows)   # lstm_rows 来自 walk_forward_lst
 ```
 
 `distinct_blue` 长期只有 1~3、`blue_entropy` 远低于 4 bit，说明模型输出已经退化，
-此时的「预测」只是常数，不构成任何优势证据。
+此时的「预测」只是常数，不构成任何优势证据。`degenerate` 的判定需要至少 16 次抽样
+（样本太少不可靠），并且 `distinct_blue <= 7` 或熵低于 2 bit 即视为退化。
+
+注意 `lstm_argmax` 与 `lstm_sample` 的读法不同：**`lstm_sample` 的蓝球会随 `SEED` 变化**
+（说明抽样确实在按概率走），而 **`lstm_argmax` 的蓝球恒定是正常的** —— 它不含随机性，
+恒定恰恰是「蓝球概率分布接近均匀、模型没有可用信号」的证据，不是 bug。
+
+## 随机种子
+
+Notebook 默认 `SEED = None`（运行时随机生成并打印实际值），所以两次运行的抽样结果不再逐位相同。
+需要复现某次结果时，把该次日志里打印的 `SEED=...` 填回配置格即可 —— 随机但不失可追溯。
+CLI 同理：`--seed` 缺省为 0，同 seed 的回测完全可复现。
 
 ## 研究边界
 
@@ -61,8 +72,9 @@ report = blue_degeneracy_report(lstm_rows)   # lstm_rows 来自 walk_forward_lst
 
 ## 变更记录
 
-当前版本 **0.2.0**：修复 LSTM 蓝球预测的确定性退化 —— 输出头改为红/蓝双头，蓝球改为 softmax，
-新增概率抽样策略与退化检测指标。完整记录见 [CHANGELOG.md](CHANGELOG.md)。
+当前版本 **0.2.1**：在 0.2.0「修复 LSTM 蓝球确定性退化（红/蓝双头、蓝球 softmax、概率抽样与
+退化检测）」的基础上，把 notebook 默认 `SEED` 改为运行时随机并打印，闭合「两次运行输出完全一样」
+的验收缺口；同时放宽退化判据、修掉候选去重的静默重复。完整记录见 [CHANGELOG.md](CHANGELOG.md)。
 
 ## License
 

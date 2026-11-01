@@ -3,6 +3,45 @@
 本项目的所有重要变更都记录在此文件中，格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.2.1] - 2026-11-01
+
+补丁版本，闭合 0.2.0 遗留的验收缺口：notebook 默认 `SEED` 写死导致两次运行输出仍然逐位相同。
+
+### 修复
+
+- `notebooks/ssq_lstm_kaggle.ipynb`：`SEED` 由常量 `42` 改为 `None`，运行时用
+  `int(time.time_ns() % 2**31)` 生成并**打印实际 SEED**；`walk_forward_lstm` 与
+  `np.random.default_rng` 共用同一个 `SEED` 变量。0.2.0 修掉了 argmax 恒定的机制，
+  但写死的种子仍让「两次运行不该完全一样」这条验收标准在默认配置下不成立。
+  默认随机、日志留痕的折中同时满足 README 的可审计立场：要复现某次结果，把日志里的 SEED 填回即可。
+- `notebooks/ssq_lstm_kaggle.ipynb`：候选组合去重失败时不再沿用上一次的红球（那会静默输出
+  重复组合、让「5 组候选」名不副实），改为跳过该条并打印警告；不足 5 组时明确说明实际得到
+  N 组互异候选，不补齐、不假装凑满。
+- `core.blue_degeneracy_report`：`degenerate` 判据由 `distinct_blue <= 3` 放宽为
+  `distinct_blue <= 7`，堵住阈值盲区 —— 四个蓝球各占 25% 时熵恰好 `log2(4) == 2.0`，
+  原判据 `entropy < 2.0` 为假，会把「只探索了 1/4 号池」的退化分布漏报为健康。
+  docstring 补写「`total <= 15` 时不作判定（样本太少不可靠）」这一下限行为。
+- `notebooks/ssq_lstm_kaggle.ipynb`：最终候选格新增 `lstm_argmax` 与 `lstm_sample` 的蓝球
+  退化对照与读法说明，避免读者把「argmax 组恒定」误判为 bug 复发 —— 它不含随机性，
+  恒定恰恰是「蓝球分布接近均匀、模型无信号」的证据。
+
+### 变更
+
+- （补记 0.2.0 的破坏性变更）`lstm.walk_forward_lstm` 返回行的 `strategy` 字段由 `"lstm"`
+  改为 `"lstm_argmax"` / `"lstm_sample"`，且**返回行数翻倍**（每期两条）。任何下游
+  `row["strategy"] == "lstm"` 的过滤会静默失效、任何按行数统计成本的地方会翻倍。
+  0.2.0 的条目里只写了功能没标注破坏性，此处补记。
+- 新增常量 `core.MAX_HEALTHY_DISTINCT_BLUE = 7` 与 `core.MIN_TRIALS_FOR_DEGENERACY = 16`，
+  退化判据的两个阈值不再散落在判据表达式里。
+- `pyproject.toml` 与 `ssq_research.__version__` 同步 `0.2.1`。
+
+### 测试
+
+- `tests/test_diagnostics.py` 补两个边界用例：四球均匀分布（熵恰为 2.0）必须判为退化、
+  15 次以内样本不作判定。现有 36 个用例全绿。
+- 双头模型 / softmax 归一 / `predict_probabilities` 拼接 / 退化阈值的独立测试由 QA
+  在 `tests/test_lstm_model.py`、`tests/test_lstm_heads.py` 落地。
+
 ## [0.2.0] - 2026-11-01
 
 本次迭代修复「LSTM 蓝球预测完全确定性 / 退化」缺陷：两次独立运行会输出完全相同的蓝球，
