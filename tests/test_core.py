@@ -1,11 +1,19 @@
+from __future__ import annotations
+
+import pytest
+
 from ssq_research.core import (
     BLUE_ENTROPY_MAX,
     Draw,
     FrequencyStrategy,
+    Pick,
     RandomStrategy,
     blue_degeneracy_report,
+    build_result_row,
+    load_csv,
     run_backtest,
     summarize,
+    write_json,
 )
 from ssq_research.prize import evaluate_prize
 from ssq_research.lstm import encode_draw, make_sequences, pick_from_probabilities
@@ -16,10 +24,58 @@ def history(n=40):
     return [Draw(str(2026001 + i), f"2026-01-{i + 1:02d}", tuple(range(1 + i % 20, 7 + i % 20)), 1 + i % 16) for i in range(n)]
 
 
+class _HistorySpy:
+    """Records exactly which draws a strategy was allowed to look at."""
+
+    name = "spy"
+
+    def __init__(self):
+        self.histories = []
+
+    def pick(self, history, rng):
+        self.histories.append(tuple(history))
+        return Pick((1, 2, 3, 4, 5, 6), 1)
+
+
 def test_backtest_only_uses_prior_draws():
+    # Asserting ``red_hits >= 0`` here would be vacuous: a cardinality can never
+    # be negative. A spy on ``strategy.pick`` is what actually proves the window
+    # contains the past and nothing else.
+    draws = history(20)
+    window = 5
+    spy = _HistorySpy()
+    rows = run_backtest(draws, (spy,), window=window, seed=3)
+
+    assert len(rows) == len(draws) - window
+    assert len(spy.histories) == len(rows)
+    for offset, seen in enumerate(spy.histories):
+        assert seen == tuple(draws[offset:offset + window])
+        forbidden = {draw.issue for draw in draws[window + offset:]}
+        assert forbidden.isdisjoint({draw.issue for draw in seen})
+
+
+def test_backtest_rows_ignore_the_target_and_every_later_draw():
+    draws = history(15)
+    window = 5
+    future = [
+        Draw(f"999000{index}", f"2027-06-{index - 14:02d}", tuple(range(1 + index % 5, 7 + index % 5)), 1 + index % 16)
+        for index in range(15, 20)
+    ]
+
+    baseline = run_backtest(draws, (RandomStrategy(), FrequencyStrategy()), window=window, seed=3)
+    widened = run_backtest(draws + future, (RandomStrategy(), FrequencyStrategy()), window=window, seed=3)
+
+    # ``run_backtest`` emits one block per strategy, so compare block by block.
+    for strategy_name in ("random", "frequency"):
+        base_rows = [row for row in baseline if row["strategy"] == strategy_name]
+        wide_rows = [row for row in widened if row["strategy"] == strategy_name]
+        assert len(base_rows) == len(draws) - window
+        assert wide_rows[: len(base_rows)] == base_rows
+
+
+def test_backtest_row_count_is_periods_times_strategies():
     rows = run_backtest(history(), (RandomStrategy(), FrequencyStrategy()), window=10, seed=3)
     assert len(rows) == 60
-    assert min(row["red_hits"] for row in rows) >= 0
 
 
 def test_backtest_records_the_picked_blue_ball():
@@ -154,3 +210,50 @@ def test_parse_does_not_mistake_footer_numbers_for_balls():
 
 def test_blue_entropy_max_is_four_bits():
     assert BLUE_ENTROPY_MAX == 4.0
+
+
+def write_csv(tmp_path, body):
+    path = tmp_path / "ssq.csv"
+    path.write_text("issue,draw_date,red_1,red_2,red_3,red_4,red_5,red_6,blue\n" + body, encoding="utf-8")
+    return path
+
+
+def test_load_csv_reads_and_sorts_rows(tmp_path):
+    path = write_csv(
+        tmp_path,
+        "2026002,2026-01-03,2,3,4,5,6,7,8\n"
+        "2026001,2026-01-01,1,2,3,4,5,6,7\n",
+    )
+    draws = load_csv(path)
+    assert [draw.issue for draw in draws] == ["2026001", "2026002"]
+    assert draws[0].reds == (1, 2, 3, 4, 5, 6)
+    assert draws[0].blue == 7
+
+
+def test_load_csv_rejects_a_duplicate_issue(tmp_path):
+    path = write_csv(
+        tmp_path,
+        "2026001,2026-01-01,1,2,3,4,5,6,7\n"
+        "2026001,2026-01-03,2,3,4,5,6,7,8\n",
+    )
+    with pytest.raises(ValueError):
+        load_csv(path)
+
+
+def test_load_csv_reports_the_offending_row(tmp_path):
+    path = write_csv(tmp_path, "2026001,2026-01-01,1,2,3,4,5,6,17\n")
+    with pytest.raises(ValueError, match="row 2"):
+        load_csv(path)
+
+
+def test_write_json_preserves_null_payout_instead_of_zero(tmp_path):
+    import json
+
+    target = Draw("9", "2026-01-09", (1, 2, 3, 4, 5, 6), 7)
+    rows = [build_result_row("s", target, Pick((1, 2, 3, 4, 5, 6), 7))]
+    path = tmp_path / "out.json"
+    write_json(rows, path)
+
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    assert payload[0]["payout"] is None
+    assert payload[0]["net"] is None
