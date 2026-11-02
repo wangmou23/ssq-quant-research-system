@@ -14,6 +14,8 @@ lstm = ["numpy>=1.26", "tensorflow>=2.15"]
 [project.scripts]
 ssq-research = "ssq_research.cli:main"
 
+[tool.setuptools]
+packages = ["ssq_research"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-
