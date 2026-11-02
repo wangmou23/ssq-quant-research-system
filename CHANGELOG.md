@@ -55,7 +55,7 @@
   `--no-algorithms`、`--with-arima`。
 - `pyproject.toml` 新增可选依赖组：`algorithms`（numpy + statsmodels）、`viz`（matplotlib）、
   `web`（gradio）、`all`。
-- 版本号 `0.2.2` → `0.3.0`。
+- 版本号**未变动**，仍为 `0.2.2`；发版时再决定新版本号以及是否升到 0.3.0。
 
 ### 设计取舍
 
