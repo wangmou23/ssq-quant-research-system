@@ -233,17 +233,34 @@ def _degeneracy_table(rows: Sequence[Mapping]) -> str:
 
 def _chart_section(draws: Sequence[Draw], report: ProbabilityReport, rows: Sequence[Mapping]) -> str:
     try:
-        from .viz import backtest_net_svg, frequency_chart_svg
+        from .viz import backtest_net_svg, frequency_chart_svg, has_cjk_font
     except RuntimeError as exc:
         return f'<div class="card">图表未生成：{html.escape(str(exc))}</div>'
+    # Chart titles follow the same rule as the axis labels: Chinese only when a
+    # CJK font is present, otherwise the report would be full of empty boxes.
+    cjk = has_cjk_font()
+
+    def title(english: str, chinese: str) -> str:
+        return chinese if cjk else english
+
     try:
-        red_chart = frequency_chart_svg(list(report.red_rows), "Red ball appearance rate (33 balls)", "appearance rate")
-        blue_chart = frequency_chart_svg(list(report.blue_rows), "Blue ball appearance rate (16 balls)", "appearance rate")
-        net_chart = backtest_net_svg(list(rows))
+        red_chart = frequency_chart_svg(
+            list(report.red_rows),
+            title("Red ball appearance rate (33 balls)", "红球出现率（33 个号）"),
+        )
+        blue_chart = frequency_chart_svg(
+            list(report.blue_rows),
+            title("Blue ball appearance rate (16 balls)", "蓝球出现率（16 个号）"),
+        )
+        net_chart = backtest_net_svg(
+            list(rows),
+            title("Cumulative net by strategy", "各策略累计净收益"),
+        )
     except RuntimeError as exc:
         return f'<div class="card">图表未生成：{html.escape(str(exc))}</div>'
     except Exception as exc:  # a chart failure must never take the report down
         return f'<div class="card">图表渲染失败：{html.escape(repr(exc))}</div>'
+    font_note = "" if cjk else '<p class="note">本次未检测到中文字体，图表文字为英文；安装任意 CJK 字体后会自动改用中文。</p>'
     return (
         f'<div class="chart">{red_chart}</div>'
         f'<p class="note">误差棒为单球 95% Wilson 区间，红色虚线为理论均匀值 6/33。区间与虚线重叠即说明该号的冷热程度无法与随机波动区分。</p>'
@@ -251,6 +268,7 @@ def _chart_section(draws: Sequence[Draw], report: ProbabilityReport, rows: Seque
         f'<p class="note">蓝球理论值为 1/16。区间普遍比红球宽，因为每个号的出现次数只有红球的约 1/6。</p>'
         f'<div class="chart">{net_chart}</div>'
         f'<p class="note">累计净收益按已结算期数累加；一/二等奖因奖池未知记为未知而不计 0，避免把头奖记成亏损。</p>'
+        f'{font_note}'
     )
 
 

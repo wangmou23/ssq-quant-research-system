@@ -31,8 +31,11 @@ def algorithm_strategies(include_arima: bool = False) -> list:
         strategies.append(ScorerStrategy(scorer, "sample"))
     strategies.append(ScorerStrategy(build_ensemble(scorers), "sample"))
     if include_arima:
-        strategies.append(ScorerStrategy(ArimaScorer(), "argmax"))
-        strategies.append(ScorerStrategy(ArimaScorer(), "sample"))
+        # estimator="css" is the same ARIMA(1, 0, 0) model estimated by conditional
+        # least squares, vectorised over all 49 series. The statsmodels MLE path
+        # costs minutes per 600-period backtest; this costs milliseconds.
+        strategies.append(ScorerStrategy(ArimaScorer(estimator="css"), "argmax"))
+        strategies.append(ScorerStrategy(ArimaScorer(estimator="css"), "sample"))
     return strategies
 
 

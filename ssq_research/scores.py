@@ -157,6 +157,51 @@ class MarkovScorer:
         return normalize(scores)
 
 
+def _ar1_one_step(series) -> "object":
+    """Closed-form one-step-ahead forecast for many AR(1)+constant series at once.
+
+    ``series`` is ``(features, time)``. Each row is fitted independently as
+    ``x[t] = c + phi * x[t-1] + e`` by ordinary least squares -- which is exactly
+    what ARIMA(1, 0, 0) reduces to, since there is no differencing and no moving
+    average term. Doing it in closed form turns 49 sequential ``statsmodels``
+    fits (tens of milliseconds each, several minutes per backtest) into a handful
+    of vectorised sums.
+
+    Rows that are constant (all zeros or all ones) have no slope to estimate, so
+    their forecast is simply their mean.
+    """
+    np = _numpy()
+    matrix = np.asarray(series, dtype=float)
+    if matrix.ndim != 2 or matrix.shape[1] < 2:
+        return matrix.mean(axis=1) if matrix.size else np.zeros(0, dtype=float)
+
+    previous = matrix[:, :-1]
+    following = matrix[:, 1:]
+    last = matrix[:, -1]
+    n = previous.shape[1]
+
+    sum_x = previous.sum(axis=1)
+    sum_xx = (previous * previous).sum(axis=1)
+    sum_y = following.sum(axis=1)
+    sum_xy = (previous * following).sum(axis=1)
+
+    mean_x = sum_x / n
+    mean_y = sum_y / n
+    # n * Var(x); zero exactly when the row never changes.
+    spread = sum_xx - n * mean_x * mean_x
+    covariance = sum_xy - n * mean_x * mean_y
+    phi = np.zeros_like(mean_y)
+    usable = spread > 1e-12
+    phi[usable] = covariance[usable] / spread[usable]
+    # Keep the process in the stationary range; a noisy binary series can
+    # otherwise produce |phi| > 1 and explode on the next step.
+    phi = np.clip(phi, -0.999, 0.999)
+    const = mean_y - phi * mean_x
+    forecast = const + phi * last
+    forecast[~usable] = mean_y[~usable]
+    return np.clip(forecast, 0.0, None)
+
+
 @dataclass
 class ArimaScorer:
     """Per-ball ARIMA on the binary appearance series.
@@ -165,21 +210,40 @@ class ArimaScorer:
     and the default order is deliberately tiny. A plain mean of the recent window
     is used as a fallback whenever a fit fails to converge, which keeps a single
     bad series from aborting a whole backtest.
+
+    ``estimator`` chooses how the coefficients are obtained:
+
+    * ``"css"``  -- closed-form conditional least squares, vectorised over all 49
+      series. Only valid for order ``(1, 0, 0)``; needs no statsmodels and runs
+      in milliseconds. This is the same model, estimated by OLS.
+    * ``"mle"``  -- ``statsmodels`` maximum likelihood, one fit per series. Slow
+      (minutes per 600-period backtest) but the reference implementation.
     """
 
     name: str = "arima"
     order: tuple[int, int, int] = (1, 0, 0)
     max_history: int = 240
     fallback_window: int = 10
+    estimator: str = "mle"
+
+    @property
+    def needs_statsmodels(self) -> bool:
+        return not (self.estimator == "css" and self.order == (1, 0, 0))
 
     def score(self, history: Sequence[Draw]):
         np = _numpy()
-        try:
-            from statsmodels.tsa.arima.model import ARIMA
-        except ImportError as exc:
-            raise RuntimeError(
-                'ARIMA scoring requires statsmodels; install with: pip install -e ".[algorithms]"'
-            ) from exc
+        if self.estimator not in ("css", "mle"):
+            raise ValueError(f'unknown ARIMA estimator: {self.estimator!r}')
+        if self.estimator == "css" and self.order != (1, 0, 0):
+            raise ValueError('estimator="css" only supports order (1, 0, 0)')
+        arima_model = None
+        if self.needs_statsmodels:
+            try:
+                from statsmodels.tsa.arima.model import ARIMA as arima_model
+            except ImportError as exc:
+                raise RuntimeError(
+                    'ARIMA scoring requires statsmodels; install with: pip install -e ".[algorithms]"'
+                ) from exc
         window = list(history)[-self.max_history:]
         if len(window) < 12:
             return normalize(np.zeros(FEATURE_COUNT))
@@ -188,6 +252,10 @@ class ArimaScorer:
             for number in draw.reds:
                 series[number - 1, index] = 1.0
             series[RED_NUMBERS + draw.blue - 1, index] = 1.0
+
+        if not self.needs_statsmodels:
+            return normalize(_ar1_one_step(series))
+
         scores = np.zeros(FEATURE_COUNT, dtype=float)
         for row_index in range(FEATURE_COUNT):
             values = series[row_index]
@@ -195,11 +263,12 @@ class ArimaScorer:
                 scores[row_index] = float(values.mean())
                 continue
             try:
-                forecast = ARIMA(values, order=self.order, trend="c").fit().forecast(1)[0]
+                forecast = arima_model(values, order=self.order, trend="c").fit().forecast(1)[0]
             except Exception:  # convergence failures are common on binary series
                 forecast = float(values[-self.fallback_window:].mean())
             scores[row_index] = max(0.0, float(forecast))
         return normalize(scores)
+
 
 
 @dataclass
@@ -333,18 +402,26 @@ class ScorerStrategy:
 
 
 def available_algorithms() -> dict[str, bool]:
-    """Which optional scoring backends can actually be imported right now."""
-    status = {"frequency": True, "markov": True, "ensemble": True}
+    """Which optional scoring backends can actually be imported right now.
+
+    ``arima`` is about the estimator the backtest uses: the closed-form
+    conditional-least-squares path only needs numpy, so it is available on a bare
+    install. ``arima_mle`` additionally reports whether the slower
+    ``statsmodels`` maximum-likelihood path is usable.
+    """
+    status = {"frequency": True, "markov": True, "ensemble": True,
+              "arima": True, "arima_mle": False}
     try:
         _numpy()
     except RuntimeError:
         status["frequency"] = status["markov"] = status["ensemble"] = False
+        status["arima"] = False
     try:
         import statsmodels  # noqa: F401
 
-        status["arima"] = True
+        status["arima_mle"] = True
     except ImportError:
-        status["arima"] = False
+        status["arima_mle"] = False
     try:
         import tensorflow  # noqa: F401
 

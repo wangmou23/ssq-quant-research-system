@@ -33,20 +33,25 @@
   - `MarkovScorer`：红球逐号两状态出现链（Laplace 平滑）；蓝球 16×16 转移矩阵，
     可表达「上一个蓝球之后常跟哪个」，这是纯频率统计做不到的。
   - `ArimaScorer`：对每个号的 0/1 出现序列拟合 ARIMA（默认 (1,0,0)），拟合失败回退为近期均值，
-    避免单条序列不收敛中断整轮回测；`max_history` 限制成本。
+    避免单条序列不收敛中断整轮回测；`max_history` 限制成本。`estimator` 可选 `"mle"`
+    （statsmodels，逐序列极大似然）或 `"css"`（闭式条件最小二乘，向量化算完全部 49 条序列）。
+    ARIMA(1,0,0) 无差分、无移动平均项，本质是带常数项的 AR(1)，两种估计是同一模型的不同解法。
   - `LstmScorer`：包装已训练的双头模型，使 LSTM 与统计基线进入同一张对照表。
   - `EnsembleScorer`：先归一化再加权，避免原始量纲大的评分器压过其他成员。
   - `pick_from_scores` / `ScorerStrategy`：`argmax` 与 `sample` 两种出票模式，策略名带模式后缀
     （`frequency_argmax` / `frequency_sample`），回测行不会混淆。
 - `ssq_research.viz`：`frequency_chart_svg`（含 95% 误差棒与理论参考线）、`rolling_rate_svg`、
-  `backtest_net_svg`、`score_chart_svg`。图内标签一律英文，因为 matplotlib 默认字体在 Kaggle 上
-  没有中文字形，中文会渲染成方框。
+  `backtest_net_svg`、`score_chart_svg`。图内文字按字体可用性切换中英文：`ensure_cjk_font()`
+  先查已注册字族、找不到再用 `addfont` 注册常见 CJK 字体文件，全都没有就整份退回英文——
+  **不假设字体存在**，否则报告会满屏方框。`reset_font_cache()` 供运行时装完字体后重新探测。
 - `ssq_research.report`：单文件 HTML 仪表盘。图表以内嵌 SVG 输出、数据以 JSON 内嵌，
   无外部请求，Kaggle 里下载即可打开。含结论横幅、卡方结果卡、Top5 显著性表、奖级概率表、
   多算法对照表（带相对随机基线的 p 值）、退化检测表、单号查询（纯 JS）。
 - `ssq_research.webapp`：可选 Gradio 界面，`launch(share=True)` 可在 Kaggle 通过隧道访问。
   每次出票都会同时打印一等奖概率，避免把「生成得快」误读成「更可能中」。
 - `notebooks/ssq_multi_algo_kaggle.ipynb`：一键跑通取数 → 概率分析 → 多算法对照 → HTML 报告。
+- `notebooks/ssq_all_in_one_kaggle.ipynb`：把取数、概率分析、多算法、可选 LSTM、报告与 Gradio
+  收进同一入口，默认 3 分钟内出结果。
 - `tests/test_stats.py`（纯标准库）与 `tests/test_scores.py`（`importorskip("numpy")`）。
 
 ### 变更
@@ -56,6 +61,24 @@
 - `pyproject.toml` 新增可选依赖组：`algorithms`（numpy + statsmodels）、`viz`（matplotlib）、
   `web`（gradio）、`all`。
 - 版本号**未变动**，仍为 `0.2.2`；发版时再决定新版本号以及是否升到 0.3.0。
+
+### 补充（同一批合入）
+
+- `data_fetch` 取数改为多源回退，任一成功即停：
+  `17500-https` → `17500-http` → 福彩官网 JSON 接口 → 随包快照。
+  `DEFAULT_SSQ_URL` 由 `http://` 改为 `https://`（明文地址在 Kubernetes 出口代理后面会被直接 reset）。
+  新增 `fetch_ssq_draws_with_fallback` / `FetchOutcome`：逐条记录失败原因，回退到快照时显式警告，
+  避免「静默用了旧数据」。`load_snapshot()` 读取随包发布的
+  `ssq_research/data/ssq_snapshot.csv`（3522 期，2003-02-23 → 2026-11-01），
+  `pyproject.toml` 增加 `package-data` 使快照随 wheel 一起分发。
+- `ArimaScorer` 新增 `estimator="css"`：把 49 条序列的 AR(1)+截距一次性向量化求解，
+  单次约 0.6 ms（原 MLE 路径 49 次拟合需数秒到数十秒），`algorithm_strategies()` 的 ARIMA
+  策略改用这条，600 期回测从数十分钟降到 1 秒内。默认构造仍是 `"mle"`，既有行为不变。
+  与手写 OLS 的偏差为 6.7e-16。
+- `viz` 支持中文字体；`notebooks/ssq_all_in_one_kaggle.ipynb` 新增 `SETUP_CJK_FONT` 开关，
+  打开时现场安装 `fonts-wqy-zenhei` 并重置字体缓存。
+- README 新增「算法说明」一节：五个算法的原理、参数与已知局限逐条写清，
+  并把「先看退化指标再看命中」写成固定读法。
 
 ### 设计取舍
 

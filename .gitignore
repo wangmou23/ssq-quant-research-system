@@ -2,6 +2,12 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 .venv/
+build/
+*.egg-info/
 backtest.json
-data/*.csv
 
+# User-downloaded data lives in the repo root, not inside the package.
+/data/*.csv
+# The bundled snapshot must be version-controlled: load_snapshot() reads it and
+# the wheel ships it via package-data.
+!ssq_research/data/ssq_snapshot.csv

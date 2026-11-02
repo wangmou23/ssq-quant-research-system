@@ -21,5 +21,10 @@ ssq-research = "ssq_research.cli:main"
 [tool.setuptools]
 packages = ["ssq_research"]
 
+[tool.setuptools.package-data]
+# The bundled history snapshot lives inside the package so that
+# `load_snapshot()` still works after a real install, not just from a checkout.
+ssq_research = ["data/*.csv"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
