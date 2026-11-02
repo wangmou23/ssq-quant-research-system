@@ -14,6 +14,10 @@
 - 固定奖金基线与可变奖金的明确标记（一/二等奖金额未知时记为 `None`，不当作 0 元）
 - 蓝球退化检测指标（`distinct_blue` / `blue_entropy` / `top1_share` / `longest_run`）
 - 可选的双头（红 sigmoid + 蓝 softmax）多层 LSTM 训练、预测和 walk-forward 回测流水线
+- 概率与显著性分析：Wilson 置信区间、卡方拟合优度检验、各奖级理论概率（由组合数算出，非硬编码）
+- 多算法对照：频率（可加时间衰减）、马尔可夫链、ARIMA、LSTM、集成，全部与随机基线同窗口同成本逐期对比
+- 可视化与单文件 HTML 仪表盘（图表内嵌 SVG，Kaggle 里直接下载打开即可）
+- 可选 Gradio 实时查询界面
 
 ## 使用
 
@@ -21,6 +25,19 @@
 python -m ssq_research.cli demo
 python -m ssq_research.cli backtest --csv data/ssq.csv --window 30 --seed 0 --output backtest.json
 ```
+
+生成单文件 HTML 研究报告（概率分析 + 多算法对照 + 图表 + 单号查询）：
+
+```powershell
+python -m pip install -e ".[algorithms,viz]"
+python -m ssq_research.cli report --csv data/ssq.csv --window 100 --max-periods 600 --output report.html
+```
+
+- `--no-algorithms`：只跑随机与频率基线，不跑评分算法
+- `--with-arima`：额外跑 ARIMA 评分器（需要 statsmodels）
+- `--max-periods`：限制回测期数，0 表示全部（全量较慢）
+
+Kaggle 上一键运行见 [`notebooks/ssq_multi_algo_kaggle.ipynb`](notebooks/ssq_multi_algo_kaggle.ipynb)。
 
 CSV 字段：`issue,draw_date,red_1,red_2,red_3,red_4,red_5,red_6,blue`。
 
@@ -62,6 +79,28 @@ Notebook 默认 `SEED = None`（运行时随机生成并打印实际值），所
 需要复现某次结果时，把该次日志里打印的 `SEED=...` 填回配置格即可 —— 随机但不失可追溯。
 CLI 同理：`--seed` 缺省为 0，同 seed 的回测完全可复现。
 
+## 概率分析的口径
+
+报告里的「高频号码 Top 5」是**历史频次排名**，不是预测。每个号都附 95% Wilson 区间与理论值，
+「判定」列会明确写出该号的冷热是否超出随机波动。
+
+- 红球理论出现率 `6/33 = 18.18%`，蓝球 `1/16 = 6.25%`。
+- 卡方拟合优度检验（红 df=32、蓝 df=15）判断历史分布是否偏离均匀。p 值大表示一致，
+  此时任何「热号/冷号」结论都只是噪声。
+- 同时检验 33 个号时，**即使开奖完全公平**，也必然有一两个号的单球 95% 区间不覆盖理论值。
+  这是多重比较的必然结果，不是发现了规律。
+- 各奖级概率由组合数计算（`math.comb`），一等奖恒为 `1 / 17,721,088`，与选号方式无关。
+
+## 多算法为什么打不过随机基线
+
+每个算法都实现为 `score(history) -> (49,)` 的评分器，再统一接入同一套滚动回测，因此
+`frequency`、`markov`、`arima`、`lstm`、`ensemble` 与 `random` 是在同窗口、同成本下逐期比较的。
+
+「集成学习提高预测准确性」这句话对公平开奖不成立：它降低的是多个模型输出之间的方差，
+不是开奖本身的随机性——**几个都无法超越随机基线的模型，加权平均后依然无法超越**。
+报告会给出每个策略相对随机基线的双比例检验 p 值，以及 `distinct_blue` / `blue_entropy`
+退化指标，用来区分「真的赢了」和「输出退化成常数」。
+
 ## 研究边界
 
 - 不使用目标期数据生成该期预测。
@@ -72,9 +111,9 @@ CLI 同理：`--seed` 缺省为 0，同 seed 的回测完全可复现。
 
 ## 变更记录
 
-当前版本 **0.2.2**：在 0.2.0「修复 LSTM 蓝球确定性退化（红/蓝双头、蓝球 softmax、概率抽样与
-退化检测）」与 0.2.1「notebook 默认 `SEED` 改为运行时随机并打印、放宽退化判据、修掉候选去重静默重复」
-的基础上，补齐测试覆盖（101 用例，双头结构 / softmax 归一 / 退化阈值边界），运行时代码零改动。
+当前版本 **0.3.0**：在 0.2.x「修复 LSTM 蓝球确定性退化 + 补齐测试覆盖」的基础上，新增概率与显著性
+分析（Wilson 区间、卡方检验、组合数计算的奖级概率）、多算法评分对照（频率/马尔可夫/ARIMA/LSTM/集成）、
+可视化与单文件 HTML 仪表盘、可选 Gradio 界面。所有算法仍强制与随机基线对比，退化指标随报告一起输出。
 完整记录见 [CHANGELOG.md](CHANGELOG.md)。
 
 ## License

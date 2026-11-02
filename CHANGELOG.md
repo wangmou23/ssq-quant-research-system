@@ -3,6 +3,65 @@
 本项目的所有重要变更都记录在此文件中，格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.3.0] - 2026-11-02
+
+功能性版本：新增概率与显著性分析、多算法评分对照、可视化与单文件 HTML 仪表盘。
+**运行时代码新增，既有 API 未破坏**：`demo` / `backtest` 行为、`core` 与 `lstm` 的对外签名均未改动。
+
+先说结论，免得被下面的功能列表误导：这些算法**不能提高中奖概率**。它们被实现成同一套评分契约，
+是为了让「没有优势」这件事可被检验和复现，而不是为了给出更准的号码。一等奖概率恒为
+`1 / 17,721,088`，与选号方式无关。
+
+### 新增
+
+- `ssq_research.stats`（纯标准库，零依赖）：
+  - `wilson_interval`：二项比例的 Wilson 置信区间。蓝球 p = 1/16 时正态近似会明显失真，故不用教科书公式。
+  - `red_frequency` / `blue_frequency`：每号出现次数、历史率、理论率、区间、是否超出区间。
+  - `chi_square_survival`：卡方尾概率。为免除 scipy 依赖，自行实现正则化不完全伽马函数
+    （级数 + 连分式），并用 `chi2_sf(32,32)≈0.4667` 等参考点校验。
+  - `red_uniformity` / `blue_uniformity`：卡方拟合优度检验（红 df=32、蓝 df=15）。
+  - `prize_odds`：六个奖级的组合数与概率，**由 `math.comb` 计算而非硬编码**；
+    校验值：一等奖 1/17,721,088、二等奖 1/1,181,406、三等奖 1/109,389、四等奖 1/2,303、
+    五等奖 1/128.9、六等奖 5.889%。
+  - `compare_proportions`：两个命中率的双比例检验，用于判断「比随机基线好」是否超出二项噪声。
+  - `build_probability_report`：把上面这些汇总成一个冻结容器。
+- `ssq_research.scores`：统一评分契约 `score(history) -> (49,)`，与取号步骤解耦。
+  - `FrequencyScorer`：历史出现率，`half_life` 可开启指数时间衰减。
+  - `MarkovScorer`：红球逐号两状态出现链（Laplace 平滑）；蓝球 16×16 转移矩阵，
+    可表达「上一个蓝球之后常跟哪个」，这是纯频率统计做不到的。
+  - `ArimaScorer`：对每个号的 0/1 出现序列拟合 ARIMA（默认 (1,0,0)），拟合失败回退为近期均值，
+    避免单条序列不收敛中断整轮回测；`max_history` 限制成本。
+  - `LstmScorer`：包装已训练的双头模型，使 LSTM 与统计基线进入同一张对照表。
+  - `EnsembleScorer`：先归一化再加权，避免原始量纲大的评分器压过其他成员。
+  - `pick_from_scores` / `ScorerStrategy`：`argmax` 与 `sample` 两种出票模式，策略名带模式后缀
+    （`frequency_argmax` / `frequency_sample`），回测行不会混淆。
+- `ssq_research.viz`：`frequency_chart_svg`（含 95% 误差棒与理论参考线）、`rolling_rate_svg`、
+  `backtest_net_svg`、`score_chart_svg`。图内标签一律英文，因为 matplotlib 默认字体在 Kaggle 上
+  没有中文字形，中文会渲染成方框。
+- `ssq_research.report`：单文件 HTML 仪表盘。图表以内嵌 SVG 输出、数据以 JSON 内嵌，
+  无外部请求，Kaggle 里下载即可打开。含结论横幅、卡方结果卡、Top5 显著性表、奖级概率表、
+  多算法对照表（带相对随机基线的 p 值）、退化检测表、单号查询（纯 JS）。
+- `ssq_research.webapp`：可选 Gradio 界面，`launch(share=True)` 可在 Kaggle 通过隧道访问。
+  每次出票都会同时打印一等奖概率，避免把「生成得快」误读成「更可能中」。
+- `notebooks/ssq_multi_algo_kaggle.ipynb`：一键跑通取数 → 概率分析 → 多算法对照 → HTML 报告。
+- `tests/test_stats.py`（纯标准库）与 `tests/test_scores.py`（`importorskip("numpy")`）。
+
+### 变更
+
+- `cli` 新增 `report` 子命令：`--window`（默认 100）、`--seed`、`--max-periods`、
+  `--no-algorithms`、`--with-arima`。
+- `pyproject.toml` 新增可选依赖组：`algorithms`（numpy + statsmodels）、`viz`（matplotlib）、
+  `web`（gradio）、`all`。
+- 版本号 `0.2.2` → `0.3.0`。
+
+### 设计取舍
+
+- `stats` 坚持零依赖，`scores` / `viz` / `webapp` 的第三方依赖全部惰性导入并给出可执行的安装提示，
+  这样 `demo` / `backtest` 在裸 Python 环境下仍可用。
+- 报告的「高频 Top 5」按频次排序，但每行强制附带 95% 区间与判定列。只给排名不给区间，
+  等于把噪声包装成结论。
+- 一/二等奖 `payout=None` 的行在累计净收益里跳过而不是记 0，否则中头奖会显示成亏损 2 元。
+
 ## [0.2.2] - 2026-11-01
 
 测试补强版本。**运行时代码零改动**：`ssq_research/` 与 `notebooks/` 一行未改，行为与 API 与 0.2.1 完全一致，

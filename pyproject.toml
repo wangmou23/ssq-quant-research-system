@@ -4,12 +4,16 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ssq-quant-research-system"
-version = "0.2.2"
+version = "0.3.0"
 requires-python = ">=3.10"
 dependencies = []
 
 [project.optional-dependencies]
 lstm = ["numpy>=1.26", "tensorflow>=2.15"]
+algorithms = ["numpy>=1.26", "statsmodels>=0.14"]
+viz = ["matplotlib>=3.8"]
+web = ["gradio>=4.0"]
+all = ["numpy>=1.26", "tensorflow>=2.15", "statsmodels>=0.14", "matplotlib>=3.8", "gradio>=4.0"]
 
 [project.scripts]
 ssq-research = "ssq_research.cli:main"
