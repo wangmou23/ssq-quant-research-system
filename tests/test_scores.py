@@ -218,3 +218,56 @@ def test_arima_scorer_without_statsmodels_raises_an_actionable_error():
             ArimaScorer().score(make_draws(20))
     else:
         pytest.skip("statsmodels is installed; the import guard cannot be exercised")
+
+
+def _rolling_draws(count: int = 24) -> list[Draw]:
+    """Synthetic history whose reds and blues actually vary per period."""
+    return [
+        Draw(f"{index:04d}", f"2026-{(index % 12) + 1:02d}-{(index % 28) + 1:02d}",
+             tuple(range(1 + index % 20, 7 + index % 20)), 1 + index % 16)
+        for index in range(count)
+    ]
+
+
+def test_sampled_pick_accepts_stdlib_random_and_is_reproducible():
+    # 回归：core.run_backtest 给每个策略的是 random.Random，而不是 numpy Generator。
+    # 修复前 random.Random.choice 不接受 size/replace/p，sampled 策略在回测里必崩。
+    import random
+
+    history = tuple(_rolling_draws())
+    strategy = ScorerStrategy(FrequencyScorer(), "sample")
+
+    first = strategy.pick(history, random.Random(7))
+    second = strategy.pick(history, random.Random(7))
+
+    assert isinstance(first, Pick)
+    assert first == second
+    assert len(set(first.reds)) == 6
+    assert all(1 <= number <= 33 for number in first.reds)
+    assert 1 <= first.blue <= BLUE_NUMBERS
+
+
+def test_sampled_pick_varies_across_stdlib_random_seeds():
+    import random
+
+    history = tuple(_rolling_draws())
+    strategy = ScorerStrategy(FrequencyScorer(), "sample")
+    picks = {strategy.pick(history, random.Random(seed)) for seed in range(20)}
+
+    assert len(picks) > 1
+
+
+def test_run_backtest_accepts_scorer_strategies():
+    # 端到端回归：崩在 Kaggle 上的那条调用路径本身。
+    from ssq_research.core import run_backtest, summarize
+
+    draws = _rolling_draws(12)
+    strategies = [
+        ScorerStrategy(FrequencyScorer(), "sample"),
+        ScorerStrategy(FrequencyScorer(), "argmax"),
+    ]
+    rows = run_backtest(draws, strategies, window=3, seed=7)
+
+    assert rows
+    summary = summarize(rows)
+    assert {item["strategy"] for item in summary} == {"frequency_sample", "frequency_argmax"}

@@ -345,16 +345,38 @@ def top_indices(weights, count: int):
     return np.argsort(array)[::-1][:count]
 
 
-def _sample_without_replacement(weights, size: int, rng):
+def _coerce_rng(rng):
+    """Accept either a numpy ``Generator`` or a stdlib ``random.Random``.
+
+    ``core.run_backtest`` seeds one ``random.Random`` per strategy and hands it
+    to every ``pick`` call, while the sampling helpers below speak numpy —
+    ``random.Random.choice`` has no ``size``/``replace``/``p`` arguments, which
+    is exactly how the sampled strategies crashed inside a backtest. Deriving
+    the ``Generator`` from the caller's own state (one 64-bit draw) keeps the
+    whole backtest reproducible from the single ``seed`` argument instead of
+    introducing a second, hidden stream of randomness.
+    """
+    np = _numpy()
+    if isinstance(rng, np.random.Generator):
+        return rng
+    getrandbits = getattr(rng, "getrandbits", None)
+    if getrandbits is not None:  # random.Random and friends
+        return np.random.default_rng(getrandbits(64))
+    # Unknown duck-typed rng without a bit source: fall back to entropy rather
+    # than crash. None of the project's own callers take this path.
+    return np.random.default_rng()
+
+
+def _sample_without_replacement(weights, size: int, generator):
     np = _numpy()
     distribution = normalize(weights)
     support = int(np.count_nonzero(distribution))
     if support < size:
         # Not enough non-zero mass: fall back to a uniform draw over the whole
         # pool instead of raising, so a degenerate scorer cannot abort a run.
-        return rng.choice(np.arange(distribution.size), size=size, replace=False)
+        return generator.choice(np.arange(distribution.size), size=size, replace=False)
     distribution = distribution / float(distribution.sum())
-    return rng.choice(np.arange(distribution.size), size=size, replace=False, p=distribution)
+    return generator.choice(np.arange(distribution.size), size=size, replace=False, p=distribution)
 
 
 def pick_from_scores(scores, rng, mode: str = "sample") -> Pick:
@@ -363,6 +385,10 @@ def pick_from_scores(scores, rng, mode: str = "sample") -> Pick:
     ``mode="argmax"`` is a deterministic point estimate with no randomness at all;
     ``mode="sample"`` draws without replacement in proportion to the scores, so
     the same scores produce varied tickets across seeds.
+
+    ``rng`` may be a numpy ``Generator`` (what ``webapp`` passes) or a stdlib
+    ``random.Random`` (what ``core.run_backtest`` passes); the sampled path
+    normalises it via :func:`_coerce_rng` first.
     """
     np = _numpy()
     if mode not in {"argmax", "sample"}:
@@ -372,8 +398,9 @@ def pick_from_scores(scores, rng, mode: str = "sample") -> Pick:
         red_indices = top_indices(distribution[:RED_NUMBERS], 6)
         blue_index = int(top_indices(distribution[RED_NUMBERS:], 1)[0])
     else:
-        red_indices = _sample_without_replacement(distribution[:RED_NUMBERS], 6, rng)
-        blue_index = int(_sample_without_replacement(distribution[RED_NUMBERS:], 1, rng)[0])
+        generator = _coerce_rng(rng)
+        red_indices = _sample_without_replacement(distribution[:RED_NUMBERS], 6, generator)
+        blue_index = int(_sample_without_replacement(distribution[RED_NUMBERS:], 1, generator)[0])
     reds = tuple(sorted(int(index) + 1 for index in np.sort(red_indices)))
     return Pick(reds, blue_index + 1)
 
