@@ -37,13 +37,10 @@ python -m ssq_research.cli report --csv data/ssq.csv --window 100 --max-periods 
 - `--with-arima`：额外跑 ARIMA 评分器（需要 statsmodels）
 - `--max-periods`：限制回测期数，0 表示全部（全量较慢）
 
-Kaggle 上一键运行见 [`notebooks/ssq_all_in_one_kaggle.ipynb`](notebooks/ssq_all_in_one_kaggle.ipynb)：
+Kaggle 上一键运行见 [`notebooks/ssq_kaggle.ipynb`](notebooks/ssq_kaggle.ipynb)：
 一份跑完取数、概率分析、多算法对照、可选 LSTM、HTML 报告与可选 Gradio 界面，默认 3 分钟内出结果。
 
-另有两份专项 Notebook，按需使用：
-
-- [`notebooks/ssq_multi_algo_kaggle.ipynb`](notebooks/ssq_multi_algo_kaggle.ipynb)：只做概率分析 + 多算法对照 + 报告
-- [`notebooks/ssq_lstm_kaggle.ipynb`](notebooks/ssq_lstm_kaggle.ipynb)：只做 LSTM 顺序回测与最终候选
+Notebook 只保留这一份；原来按专项拆分的三份已删除，功能全部收进这一份。
 
 ### 数据来源
 

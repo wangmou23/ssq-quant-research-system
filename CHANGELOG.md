@@ -49,9 +49,10 @@
   多算法对照表（带相对随机基线的 p 值）、退化检测表、单号查询（纯 JS）。
 - `ssq_research.webapp`：可选 Gradio 界面，`launch(share=True)` 可在 Kaggle 通过隧道访问。
   每次出票都会同时打印一等奖概率，避免把「生成得快」误读成「更可能中」。
-- `notebooks/ssq_multi_algo_kaggle.ipynb`：一键跑通取数 → 概率分析 → 多算法对照 → HTML 报告。
-- `notebooks/ssq_all_in_one_kaggle.ipynb`：把取数、概率分析、多算法、可选 LSTM、报告与 Gradio
-  收进同一入口，默认 3 分钟内出结果。
+- `notebooks/ssq_kaggle.ipynb`：**唯一保留的 Notebook**。把取数、概率分析、多算法、可选 LSTM、
+  报告与 Gradio 收进同一入口，默认 3 分钟内出结果。
+  原按专项拆分的 `ssq_multi_algo_kaggle.ipynb` / `ssq_lstm_kaggle.ipynb` /
+  `ssq_all_in_one_kaggle.ipynb` 已删除，功能全部收进这一份。
 - `tests/test_stats.py`（纯标准库）与 `tests/test_scores.py`（`importorskip("numpy")`）。
 
 ### 变更
@@ -75,10 +76,15 @@
   单次约 0.6 ms（原 MLE 路径 49 次拟合需数秒到数十秒），`algorithm_strategies()` 的 ARIMA
   策略改用这条，600 期回测从数十分钟降到 1 秒内。默认构造仍是 `"mle"`，既有行为不变。
   与手写 OLS 的偏差为 6.7e-16。
-- `viz` 支持中文字体；`notebooks/ssq_all_in_one_kaggle.ipynb` 新增 `SETUP_CJK_FONT` 开关，
+- `viz` 支持中文字体；Notebook 的 `SETUP_CJK_FONT` 开关，
   打开时现场安装 `fonts-wqy-zenhei` 并重置字体缓存。
 - README 新增「算法说明」一节：五个算法的原理、参数与已知局限逐条写清，
   并把「先看退化指标再看命中」写成固定读法。
+- **修复（Kaggle 实跑暴露）**：`core.run_backtest` 给策略的是标准库 `random.Random`，
+  而 `pick_from_scores` 的抽样路径假定 numpy `Generator`——`random.Random.choice` 不接受
+  `size`/`replace`/`p`，sampled 评分策略在回测里必然 `TypeError`。新增 `_coerce_rng`
+  从调用方状态派生 `Generator`，整个回测仍由单一 `seed` 可复现；补 3 个回归用例
+  （含 `run_backtest` + `ScorerStrategy` 的端到端路径）。
 
 ### 设计取舍
 
